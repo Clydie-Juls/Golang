@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strings"
 )
 
 type inputCommands struct {
@@ -51,7 +52,7 @@ func inputMaxRegularWorkHours(currHours *int) {
 	}
 }
 
-func inputNoOfWorkDays(currDays *int) {
+func inputNoOfWorkDays(currDays *int, dayTypes []string) {
 	for {
 		fmt.Printf("Input number of work days (currently %d):", *currDays)
 		_, err := fmt.Scan(currDays)
@@ -60,14 +61,22 @@ func inputNoOfWorkDays(currDays *int) {
 			continue
 		}
 
-		if *currDays <= 0 {
-			fmt.Println("Don't be such a lazybum. At least work for 1 day in a week. Try again.")
+		if *currDays < 0 {
+			fmt.Println("No negative values allowed. Try again.")
 			continue
 		}
 
 		if *currDays > 7 {
 			fmt.Println("There's only 7 days in a week. Try again.")
 			continue
+		}
+
+		for i := range dayTypes {
+			if i+1 <= *currDays {
+				dayTypes[i] = "Normal Day"
+			} else {
+				dayTypes[i] = "Rest Day"
+			}
 		}
 
 		break
@@ -135,17 +144,24 @@ func inputDayType(dayTypes []string) {
 		} else {
 			types := []string{
 				"Normal Day",
-				"Rest Day",
 				"SNWH",
-				"SNWH, Rest Day",
 				"RH",
+			}
+
+			restTypes := []string{
+				"Rest Day",
+				"SNWH, Rest Day",
 				"RH, Rest Day",
 			}
 
 			dayStr := ""
 			fmt.Println("Types:")
 			for i := range types {
-				fmt.Printf("\t%s\n", types[i])
+				if i == 0 {
+					fmt.Printf("\t%s(Can be rest day depending on the number of work days)\n", types[i])
+				} else {
+					fmt.Printf("\t%s\n", types[i])
+				}
 			}
 			fmt.Printf("What day type: (currently %s):", dayTypes[day-1])
 			bio := bufio.NewReader(os.Stdin)
@@ -155,12 +171,15 @@ func inputDayType(dayTypes []string) {
 				return
 			}
 			dayStr = string(line)
-
 			validInput := false
 			for i := 0; i < len(types); i++ {
 				if types[i] == dayStr {
 					validInput = true
-					dayTypes[day] = dayStr
+					if strings.Contains(dayTypes[day-1], "Rest Day") {
+						dayTypes[day-1] = restTypes[i]
+					} else {
+						dayTypes[day-1] = dayStr
+					}
 					break
 				}
 			}

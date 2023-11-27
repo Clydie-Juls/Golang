@@ -29,19 +29,6 @@ func styleTable(t *table.Writer) {
 }
 
 func computeDailySalary(salary float32, inTime int, outTime int, workHours int, dayType string) computation {
-	newSalary := min(float32(outTime-inTime)/100*salary/float32(workHours), salary)
-	if outTime == 0 {
-		return computation{"",
-			fmt.Sprintf("%04d-%04d", inTime, (inTime+(workHours*100)+100)%2400), newSalary}
-	} else if outTime == inTime {
-		if dayType == "Rest day" {
-			return computation{"",
-				fmt.Sprintf("%04d-%04d", inTime, (inTime+(workHours*100)+100)%2400), newSalary}
-		}
-
-		return computation{"", "", 0}
-	}
-
 	multiplier := map[string]float32{
 		"Normal Day":     1.00,
 		"Rest Day":       1.30,
@@ -51,18 +38,30 @@ func computeDailySalary(salary float32, inTime int, outTime int, workHours int, 
 		"RH, Rest Day":   2.60,
 	}
 
+	diff := (min(outTime-inTime-1, workHours*100)) / 100
 	equations := map[string]string{
 		"Normal Day":     "Daily Rate",
-		"Rest Day":       fmt.Sprintf("Daily Rate x Rest Day\n\t\t= %.2f x 1.30", salary),
-		"SNWH":           fmt.Sprintf("Daily Rate x SNWH\n\t\t= %.2f x 1.30", salary),
-		"SNWH, Rest Day": fmt.Sprintf("Daily Rate x SNWH-Rest Day\n\t\t= %.2f x 1.50", salary),
-		"RH":             fmt.Sprintf("Daily Rate x RH\n\t\t= %.2f x 2.00", salary),
-		"RH, Rest Day":   fmt.Sprintf("Daily Rate x RH-Rest Day\n\t\t= %.2f x 2.60", salary),
+		"Rest Day":       fmt.Sprintf("Daily Rate x Rest Day\n\t\t= %.2f x %d / %d x 1.30", salary, diff, workHours),
+		"SNWH":           fmt.Sprintf("Daily Rate x SNWH\n\t\t= %.2f x %d / %d  x 1.30", salary, diff, workHours),
+		"SNWH, Rest Day": fmt.Sprintf("Daily Rate x SNWH-Rest Day\n\t\t= %.2f x %d / %d  x 1.50", salary, diff, workHours),
+		"RH":             fmt.Sprintf("Daily Rate x RH\n\t\t= %.2f x %d / %d  x 2.00", salary, diff, workHours),
+		"RH, Rest Day":   fmt.Sprintf("Daily Rate x RH-Rest Day\n\t\t= %.2f x %d / %d  x 2.60", salary, diff, workHours),
 	}
 
-	result := newSalary * multiplier[dayType]
+	newSalary := float32(diff) * salary / float32(workHours)
+	result := salary
+	if outTime == inTime {
+		if dayType != "Rest Day" && dayType != "SNWH, Rest Day" && dayType != "RH, Rest Day" {
+			return computation{"", "", 0}
+		}
+	} else {
+		result = newSalary * multiplier[dayType]
+	}
+
+	toTime := min(max(0, outTime-inTime), inTime+workHours*100) % 2400
+
 	return computation{equations[dayType],
-		fmt.Sprintf("%04d-%04d", inTime, (inTime+workHours*100+100)%2400), result}
+		fmt.Sprintf("%04d-%04d", inTime, toTime), result}
 }
 
 func computeDayOTSalary(salary float32, currTime int, overtime int, workHours int, dayType string) computation {
@@ -83,16 +82,16 @@ func computeDayOTSalary(salary float32, currTime int, overtime int, workHours in
 		float32(overtime) * salary / float32(workHours) * multiplier[dayType]}
 }
 
-func computeNightShiftSalary(salary float32, nsHours int, workHours int) computation {
+func computeNightShiftSalary(salary float32, nsHours int, workHours int, fromTime int, toTime int) computation {
 	equation := fmt.Sprintf("Hours on NS x Hourly Rate x NSD\n\t\t= %d x %.2f ÷ %d x 1.10",
 		nsHours, salary, workHours)
 	return computation{equation,
-		fmt.Sprintf("%04d-%04d", 2200, (2200+nsHours*100)%2400),
+		fmt.Sprintf("%04d-%04d", fromTime%2400, toTime%2400),
 		float32(nsHours) * salary / float32(workHours) * 1.1}
 
 }
 
-func computeNightOTSalary(salary float32, inTime int, currTime int, overtime int, workHours int, dayType string) computation {
+func computeNightOTSalary(salary float32, currTime int, overtime int, workHours int, dayType string) computation {
 
 	multiplier := map[string]float32{
 		"Normal Day":     1.375,
@@ -121,11 +120,19 @@ func calculateSalary(initSalary float32, inTime int, outTime int, workHours int,
 	computations = append(computations, dailyComp)
 	nightShiftHours := 0
 	if inTime != outTime {
-		g := inTime + workHours*100 + 100
-		a := min(min(outTime, g), 600+2400)
-		b := max(2200, inTime)
-		nightShiftHours = min(max(0, (a-b)/100), workHours)
-		nsComp := computeNightShiftSalary(initSalary, nightShiftHours, workHours)
+		tempInTime := inTime
+		tempOutTime := outTime
+		if inTime >= 0 && inTime <= 600 {
+			tempInTime += 2400
+			tempOutTime += 2400
+		}
+
+		fromTime := max(2200, tempInTime)
+		g := min(tempOutTime, tempInTime+workHours*100)
+		toTime := min(600+2400, g)
+
+		nightShiftHours = max(0, (toTime-fromTime)/100)
+		nsComp := computeNightShiftSalary(initSalary, nightShiftHours, workHours, fromTime, toTime)
 		if nsComp.result > 0 {
 			computations = append(computations, nsComp)
 		}
@@ -140,7 +147,7 @@ func calculateSalary(initSalary float32, inTime int, outTime int, workHours int,
 		if currentTime >= 2200 && currentTime < 600+2400 {
 			hoursOfWork = min(600+2400, outTime) - currentTime
 			dot += hoursOfWork / 100
-			computations = append(computations, computeNightOTSalary(initSalary, inTime, currentTime, hoursOfWork/100, workHours, dateType))
+			computations = append(computations, computeNightOTSalary(initSalary, currentTime, hoursOfWork/100, workHours, dateType))
 			currentTime = min(600+2400, outTime)
 		} else {
 			tempTime := currentTime
@@ -200,11 +207,9 @@ func renderData(initSalary float32, inTime int, outTime int, workHours int, date
 
 	t.AppendRows(data, table.RowConfig{AutoMerge: true})
 
-	if sum > 500 {
-		t.AppendRow(table.Row{"Computations: "})
-		for _, comp := range computations {
-			t.AppendRow(table.Row{comp.equation, comp.timeRange, fmt.Sprintf("%.2f", comp.result)})
-		}
+	t.AppendRow(table.Row{"Computations: "})
+	for _, comp := range computations {
+		t.AppendRow(table.Row{comp.equation, comp.timeRange, fmt.Sprintf("%.2f", comp.result)})
 	}
 
 	styleTable(&t)
@@ -257,7 +262,7 @@ func menuCommands() {
 	noOfWorkDays := 5
 	defaultInTime := 900
 	defaultOutTime := 900
-	dayTypes := []string{"Normal Day", "Normal Day", "Normal Day", "Normal Day", "Normal Day", "Normal Day", "Normal Day"}
+	dayTypes := []string{"Normal Day", "Normal Day", "Normal Day", "Normal Day", "Normal Day", "Rest Day", "Rest Day"}
 
 	commands := map[int]interface{}{
 		1: func() {
@@ -309,13 +314,13 @@ func generatePayroll(currSalary float32, currHours int, noOfWorkDays int, defaul
 		{currSalary, defaultInTime, defaultOutTime, currHours, dayTypes[6]},
 	}
 
-	for i := 0; i < noOfWorkDays; i++ {
+	for i := 0; i < 7; i++ {
 		fmt.Printf("On Day %d:\n", i+1)
 		inputOutTime(&(week[i].outTime))
 	}
 
 	total := float32(0)
-	for i := 0; i < noOfWorkDays; i++ {
+	for i := 0; i < 7; i++ {
 		total += renderData(week[i].salary, week[i].inTime, week[i].outTime, week[i].noOfWorkHours, week[i].dayType)
 	}
 
@@ -327,7 +332,7 @@ func configCommands(currSalary *float32, currHours *int, noOfWorkDays *int, defa
 	commands := map[int]interface{}{
 		1: func() { inputDailySalary(currSalary) },
 		2: func() { inputMaxRegularWorkHours(currHours) },
-		3: func() { inputNoOfWorkDays(noOfWorkDays) },
+		3: func() { inputNoOfWorkDays(noOfWorkDays, dayTypes) },
 		4: func() { inputInTime(defaultInTime) },
 		5: func() { inputOutTime(defaultOutTime) },
 		6: func() { inputDayType(dayTypes) },
