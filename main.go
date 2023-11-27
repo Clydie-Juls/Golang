@@ -1,3 +1,9 @@
+//********************
+//Last name: Marindo
+//Language: GO
+//Paradigm(s): imperative, procedural, object-oriented, functional
+//********************
+
 package main
 
 import (
